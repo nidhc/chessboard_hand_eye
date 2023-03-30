@@ -2,7 +2,7 @@
 
 
 ## 声明
-该代码基于easy-handeye，使用棋盘格而并不是aruco，easy-handeye主页参见https://github.com/IFL-CAMP/easy_handeye
+该代码基于easy-handeye，使用棋盘格而并不是aruco，easy-handeye主页参见https://github.com/IFL-CAMP/easy_handeye  ，easy-handeye文件夹中所有内容均来自https://github.com/IFL-CAMP/easy_handeye ，为方便读者使用故将其一并整合
 
 该代码已在ubuntu18.04中完成测试。
 
