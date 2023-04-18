@@ -213,35 +213,45 @@ public:
     {
         color_ptr = cv_bridge::toCvCopy(color_msg, sensor_msgs::image_encodings::BGR8);
         color_pic = color_ptr->image;
+        cv::Mat gray;
+        cv::cvtColor(color_pic, gray, cv::COLOR_BGR2GRAY);
 
         // 识别棋盘格
         Size board_size = Size(markerWidth, markerHeight);
         vector<Point2f> corners;
-        Point2f center;
-        // 计算corners中所有点的中心
-        for (int i = 0; i < corners.size(); i++)
-        {
-            center.x += corners[i].x;
-            center.y += corners[i].y;
-        }
-        center.x = center.x / corners.size();
-        center.y = center.y / corners.size();
 
-        bool patternfound = findChessboardCorners(color_pic, board_size, corners, CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE + CALIB_CB_FAST_CHECK);
+        bool patternfound = false;
+        try
+        {
+            patternfound = cv::findChessboardCorners(gray, board_size, corners, CALIB_CB_ADAPTIVE_THRESH + CALIB_CB_NORMALIZE_IMAGE + CALIB_CB_FAST_CHECK);
+        }
+        catch (cv::Exception &e)
+        {
+            ROS_ERROR("findChessboardCorners error");
+            cout << e.what() << endl;
+            return;
+        }
 
         static tf::TransformBroadcaster br;
-        if (patternfound)
+
+        if (patternfound == true && cam_info_received == true)
         {
+            Point2f center;
+            // 计算corners中所有点的中心
+            for (int i = 0; i < corners.size(); i++)
+            {
+                center.x += corners[i].x;
+                center.y += corners[i].y;
+            }
+            center.x = center.x / corners.size();
+            center.y = center.y / corners.size();
             cv::Mat image_gray;
             cv::cvtColor(color_pic, image_gray, cv::COLOR_BGR2GRAY);
             cv::TermCriteria criteria = cv::TermCriteria(cv::TermCriteria::MAX_ITER + cv::TermCriteria::EPS, 40, 0.01);
-            cornerSubPix(image_gray, corners, Size(11, 11), Size(-1, -1), criteria);
-            // for (int i = 0; i < corners.size(); i++)
-            // {
-            //     cout << corners[i].x << " " << corners[i].y << endl;
-            // }
+            cv::cornerSubPix(image_gray, corners, Size(11, 11), Size(-1, -1), criteria);
             ros::Time curr_stamp = color_msg->header.stamp;
-            drawChessboardCorners(color_pic, board_size, corners, patternfound);
+            cv::drawChessboardCorners(color_pic, board_size, corners, patternfound);
+
             cv_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", color_pic).toImageMsg();
             // 计算棋盘格的位姿
             vector<Point3f> obj;
@@ -253,80 +263,89 @@ public:
                 }
             }
             Mat rvec, tvec;
-            solvePnP(obj, corners, camParam.CameraMatrix, camParam.Distorsion, rvec, tvec);
-            Mat R;
-            Rodrigues(rvec, R);
-
-            Eigen::Matrix3d R_eigen;
-            Eigen::Vector3d t_eigen;
-            for (int i = 0; i < 3; i++)
+            try
             {
-                for (int j = 0; j < 3; j++)
+                cv::solvePnP(obj, corners, camParam.CameraMatrix, camParam.Distorsion, rvec, tvec);
+                Mat R;
+                Rodrigues(rvec, R);
+
+                Eigen::Matrix3d R_eigen;
+                Eigen::Vector3d t_eigen;
+                for (int i = 0; i < 3; i++)
                 {
-                    R_eigen(i, j) = R.at<double>(i, j);
+                    for (int j = 0; j < 3; j++)
+                    {
+                        R_eigen(i, j) = R.at<double>(i, j);
+                    }
+                    t_eigen(i) = tvec.at<double>(i);
                 }
-                t_eigen(i) = tvec.at<double>(i);
-            }
-            // 根据R_eigen和t_eigen计算tf::Transform
-            tf::Matrix3x3 R_tf;
-            tf::Vector3 t_tf;
-            for (int i = 0; i < 3; i++)
-            {
-                for (int j = 0; j < 3; j++)
+                // 根据R_eigen和t_eigen计算tf::Transform
+                tf::Matrix3x3 R_tf;
+                tf::Vector3 t_tf;
+                for (int i = 0; i < 3; i++)
                 {
-                    R_tf[i][j] = R_eigen(i, j);
+                    for (int j = 0; j < 3; j++)
+                    {
+                        R_tf[i][j] = R_eigen(i, j);
+                    }
+                    t_tf[i] = t_eigen(i);
+                    // cout<<t_tf[i]<<endl;
                 }
-                t_tf[i] = t_eigen(i);
-                // cout<<t_tf[i]<<endl;
+                tf::Transform transform(R_tf, t_tf);
+                tf::StampedTransform cameraToReference;
+                if (reference_frame != camera_frame)
+                {
+                    getTransform(reference_frame, camera_frame, cameraToReference);
+                    transform = static_cast<tf::Transform>(cameraToReference) * transform;
+                }
+                tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
+                br.sendTransform(stampedTransform);
+
+                geometry_msgs::PoseStamped poseMsg;
+                tf::poseTFToMsg(transform, poseMsg.pose);
+                poseMsg.header.frame_id = reference_frame;
+                poseMsg.header.stamp = curr_stamp;
+                pose_pub.publish(poseMsg);
+
+                geometry_msgs::TransformStamped transformMsg;
+                tf::transformStampedTFToMsg(stampedTransform, transformMsg);
+                transform_pub.publish(transformMsg);
+
+                geometry_msgs::Vector3Stamped positionMsg;
+                positionMsg.header = transformMsg.header;
+                positionMsg.vector = transformMsg.transform.translation;
+                position_pub.publish(positionMsg);
+
+                geometry_msgs::PointStamped pixelMsg;
+                pixelMsg.header = transformMsg.header;
+                pixelMsg.point.x = center.x;
+                pixelMsg.point.y = center.y;
+                pixelMsg.point.z = 0;
+                pixel_pub.publish(pixelMsg);
+
+                // publish rviz marker representing the ArUco marker patch
+                visualization_msgs::Marker visMarker;
+                visMarker.header = transformMsg.header;
+                visMarker.id = 1;
+                visMarker.type = visualization_msgs::Marker::CUBE;
+                visMarker.action = visualization_msgs::Marker::ADD;
+                visMarker.pose = poseMsg.pose;
+                visMarker.scale.x = markerSize * markerWidth;
+                visMarker.scale.y = markerSize * markerHeight;
+                visMarker.scale.z = 0.001;
+                visMarker.color.r = 1.0;
+                visMarker.color.g = 0;
+                visMarker.color.b = 0;
+                visMarker.color.a = 1.0;
+                visMarker.lifetime = ros::Duration(3.0);
+                marker_pub.publish(visMarker);
             }
-            tf::Transform transform(R_tf, t_tf);
-            tf::StampedTransform cameraToReference;
-            if (reference_frame != camera_frame)
+            catch (cv::Exception &e)
             {
-                getTransform(reference_frame, camera_frame, cameraToReference);
-                transform = static_cast<tf::Transform>(cameraToReference) * transform;
+                ROS_ERROR("solvePnP error");
+                cout << e.what() << endl;
+                return;
             }
-            tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
-            br.sendTransform(stampedTransform);
-
-            geometry_msgs::PoseStamped poseMsg;
-            tf::poseTFToMsg(transform, poseMsg.pose);
-            poseMsg.header.frame_id = reference_frame;
-            poseMsg.header.stamp = curr_stamp;
-            pose_pub.publish(poseMsg);
-
-            geometry_msgs::TransformStamped transformMsg;
-            tf::transformStampedTFToMsg(stampedTransform, transformMsg);
-            transform_pub.publish(transformMsg);
-
-            geometry_msgs::Vector3Stamped positionMsg;
-            positionMsg.header = transformMsg.header;
-            positionMsg.vector = transformMsg.transform.translation;
-            position_pub.publish(positionMsg);
-
-            geometry_msgs::PointStamped pixelMsg;
-            pixelMsg.header = transformMsg.header;
-            pixelMsg.point.x = center.x;
-            pixelMsg.point.y = center.y;
-            pixelMsg.point.z = 0;
-            pixel_pub.publish(pixelMsg);
-
-            // publish rviz marker representing the ArUco marker patch
-            visualization_msgs::Marker visMarker;
-            visMarker.header = transformMsg.header;
-            visMarker.id = 1;
-            visMarker.type = visualization_msgs::Marker::CUBE;
-            visMarker.action = visualization_msgs::Marker::ADD;
-            visMarker.pose = poseMsg.pose;
-            visMarker.scale.x = markerSize * markerWidth;
-            visMarker.scale.y = markerSize * markerHeight;
-            visMarker.scale.z = 0.001;
-            visMarker.color.r = 1.0;
-            visMarker.color.g = 0;
-            visMarker.color.b = 0;
-            visMarker.color.a = 1.0;
-            visMarker.lifetime = ros::Duration(3.0);
-            marker_pub.publish(visMarker);
         }
         else
         {

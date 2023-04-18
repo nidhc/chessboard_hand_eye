@@ -59,9 +59,9 @@
   <build_depend>opencv2</build_depend>
   <build_export_depend>opencv2</build_export_depend>
   <exec_depend>opencv2</exec_depend>
-  <build_depend>cv_bridge</build_depend>
-  <build_export_depend>cv_bridge</build_export_depend>
-  <exec_depend>cv_bridge</exec_depend>
+  <build_depend>cv_bridge_new</build_depend>
+  <build_export_depend>cv_bridge_new</build_export_depend>
+  <exec_depend>cv_bridge_new</exec_depend>
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
   <!-- The export tag contains other, unspecified, tags -->

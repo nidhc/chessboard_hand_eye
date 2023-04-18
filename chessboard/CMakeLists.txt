@@ -18,15 +18,16 @@ find_package(catkin REQUIRED COMPONENTS
   diagnostic_updater
   image_transport
   camera_info_manager
-  cv_bridge
+  cv_bridge_new
   visualization_msgs
   geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-find_package(OpenCV 4 REQUIRED)
+find_package(OpenCV 4.5 REQUIRED)
 
+set(cv_bridge_DIR ~/cv_bridge/devel/share/cv_bridge/cmake)
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -130,7 +131,7 @@ catkin_package(
   image_transport
   camera_info_manager
   opencv2
-  cv_bridge
+  cv_bridge_new
   visualization_msgs
   geometry_msgs
 )
